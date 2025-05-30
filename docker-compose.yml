@@ -5,12 +5,14 @@ services:
     restart: on-failure
     image: nginx
     ports:
-      - ${NGINX_PORT:-80}:80   # Disable this if you are using TLS
-      - ${NGINX_TLS_PORT:-443}:443
+      - ${NGINX_PORT:-80}:80
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./nginx/ssl/certificate.crt:/etc/nginx/ssl/certificate.crt
       - ./nginx/ssl/private_key.key:/etc/nginx/ssl/private_key.key
+    networks:
+      - pangolin
+      - internal
 
   # You do not need this if you have configured to use your own s3 file storage
   minio:
@@ -23,6 +25,9 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+      - /home/ubuntu/backups/appflowy/minio:/backups
+    networks:
+      - internal
 
   postgres:
     restart: on-failure
@@ -39,10 +44,15 @@ services:
       retries: 12
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - /home/ubuntu/backups/appflowy/postgres:/backups
+    networks:
+      - internal
 
   redis:
     restart: on-failure
     image: redis
+    networks:
+      - internal
 
   gotrue:
     restart: on-failure
@@ -62,7 +72,7 @@ services:
       # There are a lot of options to configure GoTrue. You can reference the example config:
       # https://github.com/supabase/auth/blob/master/example.env
       # The initial GoTrue Admin user to create, if not already exists.
-      - GOTRUE_ADMIN_EMAIL=${GOTRUE_ADMIN_EMAIL}
+      - GOTRUE_ADMIN_EMAIL=${GOTRUE_ADMIN_EMAIL}      
       # The initial GoTrue Admin user password to create, if not already exists.
       # If the user already exists, the update will be skipped.
       - GOTRUE_ADMIN_PASSWORD=${GOTRUE_ADMIN_PASSWORD}
@@ -109,6 +119,8 @@ services:
       # SAML 2.0 OAuth config
       - GOTRUE_SAML_ENABLED=${GOTRUE_SAML_ENABLED}
       - GOTRUE_SAML_PRIVATE_KEY=${GOTRUE_SAML_PRIVATE_KEY}
+    networks:
+      - internal
 
   appflowy_cloud:
     restart: on-failure
@@ -120,6 +132,9 @@ services:
       - APPFLOWY_GOTRUE_JWT_SECRET=${GOTRUE_JWT_SECRET}
       - APPFLOWY_GOTRUE_JWT_EXP=${GOTRUE_JWT_EXP}
       - APPFLOWY_GOTRUE_BASE_URL=${APPFLOWY_GOTRUE_BASE_URL}
+      - APPFLOWY_GOTRUE_EXT_URL=${API_EXTERNAL_URL}
+      - APPFLOWY_GOTRUE_ADMIN_EMAIL=${GOTRUE_ADMIN_EMAIL}
+      - APPFLOWY_GOTRUE_ADMIN_PASSWORD=${GOTRUE_ADMIN_PASSWORD}
       - APPFLOWY_S3_CREATE_BUCKET=${APPFLOWY_S3_CREATE_BUCKET}
       - APPFLOWY_S3_USE_MINIO=${APPFLOWY_S3_USE_MINIO}
       - APPFLOWY_S3_MINIO_URL=${APPFLOWY_S3_MINIO_URL}
@@ -139,6 +154,7 @@ services:
       - AI_SERVER_HOST=${AI_SERVER_HOST}
       - AI_SERVER_PORT=${AI_SERVER_PORT}
       - AI_OPENAI_API_KEY=${AI_OPENAI_API_KEY}
+      - APPFLOWY_ADMIN_FRONTEND_PATH_PREFIX=${ADMIN_FRONTEND_PATH_PREFIX}
       - APPFLOWY_WEB_URL=${APPFLOWY_WEB_URL}
     build:
       context: .
@@ -149,6 +165,8 @@ services:
     depends_on:
       gotrue:
         condition: service_healthy
+    networks:
+      - internal
 
   admin_frontend:
     restart: on-failure
@@ -167,18 +185,8 @@ services:
         condition: service_healthy
       appflowy_cloud:
         condition: service_started
-
-  ai:
-    restart: on-failure
-    image: appflowyinc/appflowy_ai:${APPFLOWY_AI_VERSION:-latest}
-    environment:
-      - OPENAI_API_KEY=${AI_OPENAI_API_KEY}
-      - APPFLOWY_AI_SERVER_PORT=${AI_SERVER_PORT}
-      - APPFLOWY_AI_DATABASE_URL=${AI_DATABASE_URL}
-      - APPFLOWY_AI_REDIS_URL=${AI_REDIS_URL}
-    depends_on:
-      postgres:
-        condition: service_healthy
+    networks:
+      - internal
 
   appflowy_worker:
     restart: on-failure
@@ -209,12 +217,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
+    networks:
+      - internal
+      
   appflowy_web:
     restart: on-failure
     image: appflowyinc/appflowy_web:${APPFLOWY_WEB_VERSION:-latest}
     depends_on:
       - appflowy_cloud
+    environment:
+      - AF_BASE_URL=${APPFLOWY_BASE_URL:?err}
+      - AF_GOTRUE_URL=${API_EXTERNAL_URL}
+    networks:
+      - internal
+
 volumes:
   postgres_data:
   minio_data:
+
+networks:
+  internal:
+  pangolin:
+    external: true
